@@ -13,9 +13,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -100,7 +102,7 @@ public class RotaService {
 		}
 	}
 
-	private Coordenadas getCoordenadas(String endereco) {
+	/*private Coordenadas getCoordenadas(String endereco) {
 		try {
 			aplicarRateLimit();
 
@@ -134,7 +136,61 @@ public class RotaService {
 			logger.error("Erro ao obter coordenadas para '{}': {}", endereco, e.getMessage());
 			throw new IllegalStateException("Erro ao obter coordenadas para: " + endereco, e);
 		}
+	}*/
+
+	private Coordenadas getCoordenadas(String endereco) {
+	    try {
+	        aplicarRateLimit();
+
+	        String url = String.format(OPEN_CAGE_URL, removerNumero(endereco) + ", São Paulo - SP", API_KEY);
+
+	        logger.info("Buscando coordenadas para o endereço: {}", endereco);
+	        logger.info("URL da requisição: {}", url);
+
+	        HttpHeaders headers = new HttpHeaders();
+	        headers.set("User-Agent", "ViagemApp/1.0");
+
+	        ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers),
+	                String.class);
+
+	        JsonNode root = objectMapper.readTree(response.getBody());
+
+	        if (root.has("results") && root.get("results").size() > 0) {
+	            for (JsonNode location : root.get("results")) {
+	                JsonNode components = location.path("components");
+
+	                // Log detalhado para verificação
+	                logger.info("Bairro encontrado: {}", components.path("suburb").asText());
+	                logger.info("Cidade encontrada: {}", components.path("city").asText());
+	                logger.info("Estado encontrado: {}", components.path("state_code").asText());
+
+	                // Condição ESTRITA para garantir que é São Paulo (cidade)
+	                if ("São Paulo".equalsIgnoreCase(components.path("city").asText())) {
+	                    double latitude = location.path("geometry").path("lat").asDouble();
+	                    double longitude = location.path("geometry").path("lng").asDouble();
+
+	                    logger.info("Coordenadas encontradas para São Paulo: Lat: {}, Lon: {}", latitude, longitude);
+	                    return new Coordenadas(latitude, longitude);
+	                }
+	            }
+
+	            // Nenhum resultado válido encontrado
+	            logger.error("Nenhuma coordenada encontrada em São Paulo para o endereço: {}", endereco);
+	        } else {
+	            logger.error("Nenhuma coordenada encontrada para o endereço: {}", endereco);
+	        }
+	    } catch (Exception e) {
+	        logger.error("Erro ao obter coordenadas para '{}': {}", endereco, e.getMessage(), e);
+	    }
+
+	    // Lançar erro HTTP 404 caso nenhuma coordenada seja encontrada
+	    throw new ResponseStatusException(
+	            HttpStatus.NOT_FOUND,
+	            String.format("Não foi possível encontrar coordenadas para o endereço: %s", endereco)
+	    );
 	}
+
+
 
 	private double calcularDistanciaRota(Coordenadas origem, Coordenadas destino) {
 		try {

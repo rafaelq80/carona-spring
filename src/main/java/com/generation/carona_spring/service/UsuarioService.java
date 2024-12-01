@@ -42,8 +42,6 @@ public class UsuarioService {
 	}
 
 	public Optional<Usuario> atualizarUsuario(Usuario usuario) {
-
-		usuario.setId(null);
 		
 		if (usuarioRepository.findById(usuario.getId()).isPresent()) {
 
@@ -79,6 +77,7 @@ public class UsuarioService {
 				usuarioLogin.get().setNome(usuario.get().getNome());
 				usuarioLogin.get().setFoto(usuario.get().getFoto());
 				usuarioLogin.get().setToken(gerarToken(usuarioLogin.get().getUsuario()));
+				usuarioLogin.get().setCelular(usuario.get().getCelular());
 				usuarioLogin.get().setSenha("");
 
 				return usuarioLogin;

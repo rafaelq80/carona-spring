@@ -1,4 +1,4 @@
-package com.generation.carona_spring.model;
+package com.generation.carona_spring.records;
 
 /**
  * Representa um par de coordenadas geográficas (latitude e longitude).

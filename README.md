@@ -63,6 +63,8 @@ $$
 - A distância é um valor calculado a partir da definição da rota
 - O tempo estimado é um valor calculado a partir da distância e da velocidade média
 
+Para mais detalhes, acesse a documentação do serviço RotaService **[clicando aqui](calculo_rota.md)**.
+
 <br />
 
 ## 3. Integração com as APIs - Open Cage  e  OSRM

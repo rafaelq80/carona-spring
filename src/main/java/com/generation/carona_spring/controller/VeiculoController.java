@@ -1,7 +1,6 @@
 ﻿package com.generation.carona_spring.controller;
 
 import java.util.List;
-import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -16,10 +15,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.server.ResponseStatusException;
 
 import com.generation.carona_spring.model.Veiculo;
-import com.generation.carona_spring.repository.VeiculoRepository;
+import com.generation.carona_spring.service.VeiculoService;
 
 import jakarta.validation.Valid;
 
@@ -28,49 +26,39 @@ import jakarta.validation.Valid;
 @CrossOrigin(origins = "*", allowedHeaders = "*")
 public class VeiculoController {
 
-	@Autowired
-	private VeiculoRepository veiculoRepository;
+    @Autowired
+    private VeiculoService veiculoService;
 
-	@GetMapping
-	public ResponseEntity<List<Veiculo>> getAll() {
-		return ResponseEntity.ok(veiculoRepository.findAll());
-	}
+    @GetMapping
+    public ResponseEntity<List<Veiculo>> getAll() {
+        return ResponseEntity.ok(veiculoService.listarTodos());
+    }
 
-	@GetMapping("/{id}")
-	public ResponseEntity<Veiculo> getById(@PathVariable Long id) {
-		return veiculoRepository.findById(id).map(resposta -> ResponseEntity.ok(resposta))
-				.orElse(ResponseEntity.status(HttpStatus.NOT_FOUND).build());
-	}
+    @GetMapping("/{id}")
+    public ResponseEntity<Veiculo> getById(@PathVariable Long id) {
+        return veiculoService.buscarPorId(id)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.status(HttpStatus.NOT_FOUND).build());
+    }
 
-	@GetMapping("/modelo/{modelo}")
-	public ResponseEntity<List<Veiculo>> getByModelo(@PathVariable String modelo) {
-		return ResponseEntity.ok(veiculoRepository.findAllByModeloContainingIgnoreCase(modelo));
-	}
+    @GetMapping("/modelo/{modelo}")
+    public ResponseEntity<List<Veiculo>> getByModelo(@PathVariable String modelo) {
+        return ResponseEntity.ok(veiculoService.buscarPorModelo(modelo));
+    }
 
-	@PostMapping
-	public ResponseEntity<Veiculo> post(@Valid @RequestBody Veiculo veiculo) {
+    @PostMapping
+    public ResponseEntity<Veiculo> post(@Valid @RequestBody Veiculo veiculo) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(veiculoService.criar(veiculo));
+    }
 
-		System.out.println(veiculo.getId());
+    @PutMapping
+    public ResponseEntity<Veiculo> put(@Valid @RequestBody Veiculo veiculo) {
+        return ResponseEntity.ok(veiculoService.atualizar(veiculo));
+    }
 
-		return ResponseEntity.status(HttpStatus.CREATED).body(veiculoRepository.save(veiculo));
-	}
-
-	@PutMapping
-	public ResponseEntity<Veiculo> put(@Valid @RequestBody Veiculo veiculo) {
-		return veiculoRepository.findById(veiculo.getId())
-				.map(resposta -> ResponseEntity.status(HttpStatus.OK).body(veiculoRepository.save(veiculo)))
-				.orElse(ResponseEntity.status(HttpStatus.NOT_FOUND).build());
-	}
-
-	@ResponseStatus(HttpStatus.NO_CONTENT)
-	@DeleteMapping("/{id}")
-	public void delete(@PathVariable Long id) {
-		Optional<Veiculo> veiculo = veiculoRepository.findById(id);
-
-		if (veiculo.isEmpty())
-			throw new ResponseStatusException(HttpStatus.NOT_FOUND);
-
-		veiculoRepository.deleteById(id);
-	}
-
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @DeleteMapping("/{id}")
+    public void delete(@PathVariable Long id) {
+        veiculoService.deletar(id);
+    }
 }

@@ -34,7 +34,7 @@ public class Veiculo {
     private String foto;
 
     @OneToMany(fetch = FetchType.LAZY, mappedBy = "veiculo", cascade = CascadeType.REMOVE)
-    @JsonIgnoreProperties("veiculo")
+    @JsonIgnoreProperties(value = "veiculo", allowSetters = true)
     private List<Viagem> viagem;
 
 	public Veiculo() {	}

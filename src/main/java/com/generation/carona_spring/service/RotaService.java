@@ -32,68 +32,79 @@ public class RotaService {
     private static final Logger logger = LoggerFactory.getLogger(RotaService.class);
     private static final Dotenv dotenv = Dotenv.load();
     
-    private final RestTemplate restTemplate;
-    private final ObjectMapper objectMapper;
-
-    private static final String OPEN_CAGE_URL = "https://api.opencagedata.com/geocode/v1/json?q=%s&key=%s&language=pt&format=json";
-    private static final String API_KEY = dotenv.get("API_KEY"); 
+    private final RestTemplate clienteHttp;
     
-    private static final String OSRM_URL = "http://router.project-osrm.org/route/v1/driving/%.6f,%.6f;%.6f,%.6f?overview=false";
+    /** 
+     * ObjectMapper é uma classe da biblioteca Jackson usada para converter objetos Java 
+     * em JSON e JSON em objetos Java.
+     * */
+    private final ObjectMapper mapperJson;
 
+    private static final String URL_OPENCAGE = "https://api.opencagedata.com/geocode/v1/json?q=%s&key=%s&language=pt&format=json";
+    private static final String CHAVE_API = dotenv.get("API_KEY"); 
+    private static final String URL_OSRM = "http://router.project-osrm.org/route/v1/driving/%.6f,%.6f;%.6f,%.6f?overview=false";
+
+    // Faixas de horário de pico
     private static final LocalTime INICIO_PICO_MANHA = LocalTime.of(6, 0);
     private static final LocalTime FIM_PICO_MANHA = LocalTime.of(9, 0);
     private static final LocalTime INICIO_PICO_TARDE = LocalTime.of(16, 0);
     private static final LocalTime FIM_PICO_TARDE = LocalTime.of(19, 0);
 
+    // Velocidades médias estimadas (km/h)
     private static final double VELOCIDADE_NORMAL = 50.0;
     private static final double VELOCIDADE_PICO_MANHA = 30.0;
     private static final double VELOCIDADE_PICO_TARDE = 35.0;
-    private static final double VELOCIDADE_FINAL_SEMANA = 60.0;
+    private static final double VELOCIDADE_FINAL_DE_SEMANA = 60.0;
 
+    // Parâmetros de cálculo da viagem
     private static final double TARIFA_BASE = 5.00;
-    private static final double VALOR_KM = 1.50;
-    private static final double VALOR_MINUTO = 0.50;
-    private static final double SEGURO = 2.00;
+    private static final double VALOR_POR_KM = 1.50;
+    private static final double VALOR_POR_MINUTO = 0.50;
+    private static final double VALOR_SEGURO = 2.00;
 
-    public RotaService(RestTemplate restTemplate, ObjectMapper objectMapper) {
-        this.restTemplate = restTemplate;
-        this.objectMapper = objectMapper;
+    public RotaService(RestTemplate clienteHttp, ObjectMapper mapperJson) {
+        this.clienteHttp = clienteHttp;
+        this.mapperJson = mapperJson;
     }
 
-    private void aplicarRateLimit() {
+    /** Aplica uma pausa de 2 segundos para evitar excesso de requisições à API */
+    private void aplicarLimitadorDeRequisicoes() {
         try {
-            Thread.sleep(2000); // Pausa de 2 segundos entre requisições
+            Thread.sleep(2000);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            logger.error("Erro ao aplicar rate limit: {}", e.getMessage(), e);
+            logger.error("Erro ao aplicar limitador de requisições: {}", e.getMessage(), e);
         }
     }
 
+    /** Calcula todos os parâmetros da viagem com base nos endereços informados */
     public void calcularRota(Viagem viagem) {
         try {
-        	
-            logger.info("Iniciando cálculo da rota para viagem de '{}' para '{}'", viagem.getPartida(), viagem.getDestino());
+            logger.info("Iniciando cálculo da rota de '{}' para '{}'", viagem.getPartida(), viagem.getDestino());
 
-            Coordenadas coordenadasOrigem = getCoordenadas(viagem.getPartida());
-            Coordenadas coordenadasDestino = getCoordenadas(viagem.getDestino());
+            // Obtenção das coordenadas de origem e destino
+            Coordenadas coordenadasOrigem = obterCoordenadas(viagem.getPartida());
+            Coordenadas coordenadasDestino = obterCoordenadas(viagem.getDestino());
 
-            viagem.setLatitudePartida(coordenadasOrigem.getLatitude());
-            viagem.setLongitudePartida(coordenadasOrigem.getLongitude());
-            viagem.setLatitudeDestino(coordenadasDestino.getLatitude());
-            viagem.setLongitudeDestino(coordenadasDestino.getLongitude());
+            viagem.setLatitudePartida(coordenadasOrigem.latitude());
+            viagem.setLongitudePartida(coordenadasOrigem.longitude());
+            viagem.setLatitudeDestino(coordenadasDestino.latitude());
+            viagem.setLongitudeDestino(coordenadasDestino.longitude());
 
-            double distanciaEmKm = calcularDistanciaRota(coordenadasOrigem, coordenadasDestino);
-            viagem.setDistancia(distanciaEmKm);
+            // Cálculo da distância e velocidade média
+            double distanciaKm = calcularDistanciaRota(coordenadasOrigem, coordenadasDestino);
+            viagem.setDistancia(distanciaKm);
 
             double velocidadeMedia = calcularVelocidadeMedia(viagem.getDataPartida());
             viagem.setVelocidadeMedia(velocidadeMedia);
 
-            double tempoMedio = calcularTempoMedio(distanciaEmKm, velocidadeMedia);
-            viagem.setTempoEstimado(tempoMedio);
+            // Tempo estimado e valor da viagem
+            double tempoEstimado = calcularTempoMedio(distanciaKm, velocidadeMedia);
+            viagem.setTempoEstimado(tempoEstimado);
 
-            double valor = calcularValorViagem(distanciaEmKm, tempoMedio);
-            viagem.setValor(BigDecimal.valueOf(valor).setScale(2, RoundingMode.HALF_UP));
-            
+            double valorViagem = calcularValorViagem(distanciaKm, tempoEstimado);
+            viagem.setValor(BigDecimal.valueOf(valorViagem).setScale(2, RoundingMode.HALF_UP));
+
         } catch (ResponseStatusException e) {
             logger.error("Erro HTTP: {} - {}", e.getStatusCode(), e.getReason());
             throw e;
@@ -103,88 +114,94 @@ public class RotaService {
         }
     }
 
-    private Coordenadas getCoordenadas(String endereco) {
+    /** Busca as coordenadas geográficas de um endereço usando a API OpenCage */
+    private Coordenadas obterCoordenadas(String endereco) {
         try {
-            aplicarRateLimit();
-            String url = String.format(OPEN_CAGE_URL, removerNumero(endereco) + ", São Paulo - SP", API_KEY);
+            aplicarLimitadorDeRequisicoes();
+            String url = String.format(URL_OPENCAGE, removerNumeroDoEndereco(endereco) + ", São Paulo - SP", CHAVE_API);
+            logger.info("Buscando coordenadas para: {}", endereco);
 
-            logger.info("Buscando coordenadas para o endereço: {}", endereco);
+            HttpHeaders cabecalhos = new HttpHeaders();
+            cabecalhos.set("User-Agent", "ViagemApp/1.0");
 
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("User-Agent", "ViagemApp/1.0");
+            ResponseEntity<String> resposta = clienteHttp.exchange(url, HttpMethod.GET, new HttpEntity<>(cabecalhos), String.class);
+            JsonNode raiz = mapperJson.readTree(resposta.getBody());
 
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
-            JsonNode root = objectMapper.readTree(response.getBody());
-
-            if (root.has("results") && !root.get("results").isEmpty()) {
-                for (JsonNode location : root.get("results")) {
-                    JsonNode components = location.path("components");
-                    if ("São Paulo".equalsIgnoreCase(components.path("city").asText())) {
-                        double latitude = location.path("geometry").path("lat").asDouble();
-                        double longitude = location.path("geometry").path("lng").asDouble();
-                        return new Coordenadas(latitude, longitude);
-                    }
-                }
+            if (raiz.has("results") && !raiz.get("results").isEmpty()) {
+                JsonNode geometria = raiz.get("results").get(0).path("geometry");
+                double latitude = geometria.path("lat").asDouble();
+                double longitude = geometria.path("lng").asDouble();
+                return new Coordenadas(latitude, longitude);
             }
+
             logger.error("Nenhuma coordenada encontrada para o endereço: {}", endereco);
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Endereço não encontrado: " + endereco);
+
         } catch (Exception e) {
-            logger.error("Erro ao obter coordenadas para '{}': {}", endereco, e.getMessage(), e);
+            logger.error("Erro ao obter coordenadas: {}", e.getMessage(), e);
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Erro ao buscar coordenadas", e);
         }
     }
 
+    /** Calcula a distância (em km) entre dois pontos usando a API OSRM */
     private double calcularDistanciaRota(Coordenadas origem, Coordenadas destino) {
         try {
-            aplicarRateLimit();
-            String url = String.format(Locale.US, OSRM_URL, origem.getLongitude(), origem.getLatitude(), destino.getLongitude(), destino.getLatitude());
+            aplicarLimitadorDeRequisicoes();
+            String url = String.format(Locale.US, URL_OSRM,
+                    origem.longitude(), origem.latitude(),
+                    destino.longitude(), destino.latitude());
 
-            logger.info("Calculando rota com a URL: {}", url);
+            logger.info("Calculando rota: {}", url);
 
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("User-Agent", "ViagemApp/1.0");
+            HttpHeaders cabecalhos = new HttpHeaders();
+            cabecalhos.set("User-Agent", "ViagemApp/1.0");
 
-            ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
-            JsonNode root = objectMapper.readTree(response.getBody());
+            ResponseEntity<String> resposta = clienteHttp.exchange(url, HttpMethod.GET, new HttpEntity<>(cabecalhos), String.class);
+            JsonNode raiz = mapperJson.readTree(resposta.getBody());
 
-            if (root.has("routes") && !root.get("routes").isEmpty()) {
-                double distanceInMeters = root.get("routes").get(0).get("distance").asDouble();
-                return distanceInMeters / 1000.0;
+            if (raiz.has("routes") && !raiz.get("routes").isEmpty()) {
+                double distanciaMetros = raiz.get("routes").get(0).get("distance").asDouble();
+                return distanciaMetros / 1000.0;
             }
 
-            logger.error("Não foi possível encontrar uma rota válida.");
+            logger.error("Rota não encontrada.");
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Rota não encontrada");
+
         } catch (Exception e) {
             logger.error("Erro ao calcular rota: {}", e.getMessage(), e);
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Erro ao calcular rota", e);
         }
     }
 
+    /** Calcula a velocidade média com base no horário de partida */
     private double calcularVelocidadeMedia(LocalDateTime horarioPartida) {
         if (horarioPartida == null) return VELOCIDADE_NORMAL;
 
         LocalTime horario = horarioPartida.toLocalTime();
-
-        if (isWeekend(horarioPartida)) return VELOCIDADE_FINAL_SEMANA;
+        if (isFimDeSemana(horarioPartida)) return VELOCIDADE_FINAL_DE_SEMANA;
         if (horario.isAfter(INICIO_PICO_MANHA) && horario.isBefore(FIM_PICO_MANHA)) return VELOCIDADE_PICO_MANHA;
         if (horario.isAfter(INICIO_PICO_TARDE) && horario.isBefore(FIM_PICO_TARDE)) return VELOCIDADE_PICO_TARDE;
 
         return VELOCIDADE_NORMAL;
     }
 
+    /** Converte a distância e velocidade em minutos de viagem */
     private double calcularTempoMedio(double distanciaKm, double velocidade) {
         return (distanciaKm / velocidade) * 60;
     }
 
+    /** Calcula o valor total da viagem considerando distância, tempo e tarifas fixas */
     private double calcularValorViagem(double distanciaKm, double tempoEstimado) {
-        return TARIFA_BASE + (distanciaKm * VALOR_KM) + (tempoEstimado * VALOR_MINUTO) + SEGURO;
+        return TARIFA_BASE + (distanciaKm * VALOR_POR_KM) + (tempoEstimado * VALOR_POR_MINUTO) + VALOR_SEGURO;
     }
 
-    private boolean isWeekend(LocalDateTime dateTime) {
-        return dateTime.getDayOfWeek().getValue() >= 6;
+    /** Verifica se a data informada é fim de semana */
+    private boolean isFimDeSemana(LocalDateTime dataHora) {
+        return dataHora.getDayOfWeek().getValue() >= 6;
     }
-    
-    private String removerNumero(String endereco) {
+
+    /** Remove o número do endereço (ex: "Rua das Flores, 123" -> "Rua das Flores") */
+    private String removerNumeroDoEndereco(String endereco) {
         Matcher matcher = Pattern.compile("(.*?)[,\\s]+\\d+$").matcher(endereco.trim());
         return matcher.matches() ? matcher.group(1) : endereco;
     }
